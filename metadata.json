@@ -1,0 +1,6 @@
+{
+  "name": "Smart Farm IoT Dashboard & ESP32 Firmware",
+  "description": "Automated precision agriculture platform with ESP32 IoT C++ firmware, soil moisture sensing, automated water pump relay control, live weather API sync, and real-time telemetry analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --farm-bg: #071613;
+    --farm-card: #0b221e;
+    --farm-card-hover: #0e2a25;
+    --farm-border: rgba(16, 185, 129, 0.2);
+    --farm-glow: rgba(16, 185, 129, 0.15);
+  }
+
+  body {
+    background-color: #071613;
+    color: #e2e8f0;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* Monospace for tabular data, telemetry, and code */
+  .font-mono-numbers {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom glowing effects */
+.glow-card {
+  background: linear-gradient(135deg, rgba(13, 38, 33, 0.85) 0%, rgba(8, 26, 23, 0.95) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5), 0 0 15px -3px rgba(16, 185, 129, 0.08);
+}
+
+.glow-card-active {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(6, 182, 212, 0.12) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
+}
+
+.glow-badge {
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+}
+
+.glow-text-green {
+  text-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #071613;
+}
+::-webkit-scrollbar-thumb {
+  background: #143831;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #10b981;
+}
