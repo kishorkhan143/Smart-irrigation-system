@@ -42,6 +42,10 @@ export interface WeatherData {
   humidity: number;
   windSpeed: number;
   rainChance: number;
+  latitude?: number;
+  longitude?: number;
+  locationName?: string;
+  isLocationSet?: boolean;
 }
 
 export interface AlertItem {

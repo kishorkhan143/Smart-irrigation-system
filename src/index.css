@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 @layer base {
   :root {
@@ -58,4 +59,55 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #10b981;
+}
+
+/* Leaflet Farm Pin & Map Container Overrides */
+.leaflet-div-icon.custom-farm-pin {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  font-family: inherit;
+  background-color: #0b1e1b !important;
+  cursor: crosshair !important;
+}
+
+.leaflet-control-zoom a {
+  background-color: #061613 !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background-color: #0b2e27 !important;
+  color: #ffffff !important;
+}
+
+.leaflet-control-attribution {
+  background-color: rgba(6, 22, 19, 0.75) !important;
+  color: #94a3b8 !important;
+  font-size: 10px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #34d399 !important;
+}
+
+/* Custom Farm Pin Name Tag Tooltip */
+.leaflet-tooltip.custom-farm-tooltip {
+  background: rgba(6, 22, 19, 0.95) !important;
+  color: #ffffff !important;
+  border: 1.5px solid #10b981 !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7), 0 0 10px rgba(16, 185, 129, 0.4) !important;
+  padding: 5px 10px !important;
+  white-space: nowrap !important;
+  font-family: inherit !important;
+}
+
+.leaflet-tooltip.custom-farm-tooltip::before {
+  border-top-color: #10b981 !important;
 }

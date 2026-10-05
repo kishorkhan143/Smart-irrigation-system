@@ -12,6 +12,9 @@ interface TopBarProps {
   telemetry: CurrentTelemetry;
   onToggleMobileMenu: () => void;
   weatherLocation?: string;
+  weatherCoordinates?: string;
+  onRequestLocation?: () => void;
+  onOpenMapPicker?: () => void;
   onNavigateTab: (tab: any) => void;
 }
 
@@ -19,6 +22,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   telemetry,
   onToggleMobileMenu,
   weatherLocation,
+  weatherCoordinates,
+  onRequestLocation,
+  onOpenMapPicker,
   onNavigateTab,
 }) => {
   const [currentDateTime, setCurrentDateTime] = useState('');
@@ -49,6 +55,8 @@ export const TopBar: React.FC<TopBarProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  const isLocationSet = weatherLocation && weatherLocation !== 'Farmland Location Not Set' && weatherLocation !== 'Detecting Location...';
+
   return (
     <header className="sticky top-0 z-30 w-full bg-[#071714]/90 backdrop-blur-md border-b border-emerald-950/60 px-4 sm:px-6 lg:px-8 py-3.5 transition-colors">
       <div className="flex items-center justify-between gap-4">
@@ -68,10 +76,28 @@ export const TopBar: React.FC<TopBarProps> = ({
               <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
                 <span>Smart Farm Dashboard</span>
               </h1>
-              {weatherLocation && (
-                <div className="text-[11px] text-emerald-400/90 flex items-center gap-1 font-medium">
-                  <MapPin className="w-3 h-3 text-emerald-400" />
-                  <span className="truncate max-w-[240px]">{weatherLocation}</span>
+              {isLocationSet ? (
+                <div 
+                  onClick={onOpenMapPicker || onRequestLocation}
+                  className="text-[11px] text-emerald-400/90 flex items-center gap-1 font-medium cursor-pointer hover:text-emerald-300 transition-colors"
+                  title="Click to change farm land location on map"
+                >
+                  <MapPin className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                  <span className="truncate max-w-[200px]">{weatherLocation}</span>
+                  {weatherCoordinates && (
+                    <span className="text-[10px] text-emerald-500 font-mono-numbers hidden sm:inline">
+                      [{weatherCoordinates}]
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div 
+                  onClick={onOpenMapPicker}
+                  className="text-[11px] text-emerald-400 flex items-center gap-1.5 font-bold cursor-pointer hover:underline animate-pulse"
+                  title="Click to set farm land on the interactive map"
+                >
+                  <MapPin className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                  <span>Set Farm Land on Map (0 Standby)</span>
                 </div>
               )}
             </div>

@@ -11,6 +11,7 @@ import { AlertsCard } from './components/AlertsCard';
 import { HardwareFirmwareView } from './components/HardwareFirmwareModal';
 import { ReportsView } from './components/ExtraViews';
 import { SettingsView } from './components/AiInsightsAndSettings';
+import { FarmMapModal } from './components/FarmMapModal';
 import { 
   CurrentTelemetry, 
   PumpState, 
@@ -29,7 +30,9 @@ import {
   Cpu, 
   ArrowRight, 
   ShieldCheck,
-  Power
+  Power,
+  Navigation,
+  MapPin
 } from 'lucide-react';
 
 export default function App() {
@@ -65,19 +68,24 @@ export default function App() {
     lastSwitched: new Date().toISOString(),
   });
 
-  // Live Weather is the active measurement
-  const [weather, setWeather] = useState<WeatherData & { locationName?: string }>({
+  // Live Weather is the active measurement - INITIAL 0 BASELINE (Farmland Not Set Standby)
+  const [weather, setWeather] = useState<WeatherData & { locationName?: string; isLocationSet?: boolean }>({
     temperature: 0,
-    condition: 'Detecting Location...',
+    condition: 'Standby (Farmland Not Set)',
     humidity: 0,
     windSpeed: 0,
     rainChance: 0,
-    locationName: '',
+    latitude: 0,
+    longitude: 0,
+    locationName: 'Farmland Location Not Set (0 Standby)',
+    isLocationSet: false,
   });
+
+  const [farmMapOpen, setFarmMapOpen] = useState(false);
 
   const [alerts, setAlerts] = useState<AlertItem[]>([
     { id: '1', type: 'info', title: 'Hardware components are currently OFF (Standby).', timestamp: 'Initial', read: false },
-    { id: '2', type: 'success', title: 'Live Weather API active with farm location detection.', timestamp: 'Live', read: true },
+    { id: '2', type: 'info', title: 'Farm land is currently at initial 0 standby. Set farm land on map to activate live weather.', timestamp: 'Standby', read: false },
   ]);
 
   const [history, setHistory] = useState<TelemetryPoint[]>([
@@ -112,8 +120,8 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Fetch weather with optional location/GPS/city parameters
-  const fetchWeather = async (params?: { lat?: number; lon?: number; city?: string }) => {
+  // Fetch weather with optional location/GPS/city parameters and preserved farm name
+  const fetchWeather = async (params?: { lat?: number; lon?: number; city?: string; locationName?: string }) => {
     setWeatherLoading(true);
     try {
       let url = '/api/weather';
@@ -122,13 +130,18 @@ export default function App() {
         if (params.lat !== undefined) q.set('lat', String(params.lat));
         if (params.lon !== undefined) q.set('lon', String(params.lon));
         if (params.city !== undefined) q.set('city', params.city);
+        if (params.locationName) q.set('location', params.locationName);
         url += `?${q.toString()}`;
       }
 
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        setWeather(data);
+        setWeather({
+          ...data,
+          locationName: params?.locationName || data.locationName,
+          isLocationSet: true,
+        });
       }
     } catch (e) {
       console.warn('Weather fetch error:', e);
@@ -148,8 +161,91 @@ export default function App() {
     } catch (e) {}
   };
 
+  const [gpsPermissionStatus, setGpsPermissionStatus] = useState<'prompt' | 'granted' | 'denied' | 'locating'>('prompt');
+
+  // Trigger GPS location and fetch weather
+  const requestGpsAndFetchWeather = () => {
+    setGpsPermissionStatus('locating');
+    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          setGpsPermissionStatus('granted');
+          fetchWeather({ lat, lon });
+          try {
+            localStorage.setItem('smart_farm_farmland', JSON.stringify({ lat, lon }));
+          } catch (e) {}
+        },
+        (err) => {
+          console.warn('Geolocation permission not granted or error:', err.message);
+          setGpsPermissionStatus('denied');
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+      );
+    } else {
+      setGpsPermissionStatus('denied');
+    }
+  };
+
+  // Handle Farmland map confirmation
+  const handleConfirmFarmland = (loc: { lat: number; lon: number; locationName: string }) => {
+    try {
+      localStorage.setItem('smart_farm_farmland', JSON.stringify({ ...loc, confirmedByFarmer: true }));
+    } catch (e) {}
+    fetchWeather({ lat: loc.lat, lon: loc.lon, locationName: loc.locationName });
+    setAlerts(prev => [
+      {
+        id: Date.now().toString(),
+        type: 'success',
+        title: `Farmland pinned on map: ${loc.locationName}. Live weather measurement activated.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+      },
+      ...prev,
+    ]);
+  };
+
+  // Handle Farmland reset to 0 standby
+  const handleResetFarmland = () => {
+    try {
+      localStorage.removeItem('smart_farm_farmland');
+    } catch (e) {}
+    setWeather({
+      temperature: 0,
+      condition: 'Standby (Farmland Not Set)',
+      humidity: 0,
+      windSpeed: 0,
+      rainChance: 0,
+      latitude: 0,
+      longitude: 0,
+      locationName: 'Farmland Location Not Set (0 Standby)',
+      isLocationSet: false,
+    });
+    setAlerts(prev => [
+      {
+        id: Date.now().toString(),
+        type: 'info',
+        title: 'Farmland location cleared. All weather metrics returned to initial 0 standby.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+      },
+      ...prev,
+    ]);
+  };
+
   useEffect(() => {
-    fetchWeather();
+    // Only fetch weather if farmer previously explicitly confirmed farmland location on map
+    try {
+      const saved = localStorage.getItem('smart_farm_farmland');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.confirmedByFarmer && parsed.lat && parsed.lon) {
+          fetchWeather({ lat: parsed.lat, lon: parsed.lon, locationName: parsed.locationName });
+        }
+      }
+    } catch (e) {}
+
     fetchTelemetry();
     fetchPumpState();
     fetchAlerts();
@@ -244,6 +340,13 @@ export default function App() {
           telemetry={telemetry}
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           weatherLocation={weather.locationName}
+          weatherCoordinates={
+            weather.latitude !== undefined && weather.longitude !== undefined
+              ? `${weather.latitude.toFixed(2)}°, ${weather.longitude.toFixed(2)}°`
+              : undefined
+          }
+          onRequestLocation={requestGpsAndFetchWeather}
+          onOpenMapPicker={() => setFarmMapOpen(true)}
           onNavigateTab={setCurrentTab}
         />
 
@@ -261,36 +364,102 @@ export default function App() {
 
               {/* QUICK STATUS OVERVIEW: 2 Clean Cards for Farmer Glance */}
               <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* 1. Live Weather Snapshot */}
+                {/* 1. Live Weather Snapshot with 0 Baseline until Farmland is set */}
                 <div className="glow-card rounded-2xl p-5 flex flex-col justify-between">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-xl bg-amber-950/60 border border-amber-500/30 text-amber-400">
-                        <CloudSun className="w-5 h-5" />
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`p-2 rounded-xl border ${
+                          weather.isLocationSet 
+                            ? 'bg-amber-950/60 border-amber-500/30 text-amber-400' 
+                            : 'bg-slate-800 border-slate-700 text-slate-400'
+                        }`}>
+                          <CloudSun className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <h3 className="text-sm font-bold text-white">Live Farm Weather</h3>
+                            {weather.isLocationSet ? (
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Live Weather Active" />
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.2 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                                Initial 0 Standby
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-300 font-semibold block truncate max-w-[190px]">
+                            {weather.locationName || 'Farmland Location Not Set'}
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-white">Live Farm Weather</h3>
-                        <span className="text-[11px] text-slate-400">
-                          {weather.locationName || 'Detecting Location...'}
+                      <div className="text-right">
+                        <span className="text-2xl font-black text-white font-mono-numbers">
+                          {weather.isLocationSet ? `${weather.temperature}°C` : '0°C'}
                         </span>
+                        <div className="text-[10px] font-semibold text-emerald-400">
+                          {weather.isLocationSet ? weather.condition : '0 Standby (Farmland Not Set)'}
+                        </div>
                       </div>
                     </div>
-                    <span className="text-2xl font-black text-white font-mono-numbers">
-                      {weather.temperature > 0 ? `${weather.temperature}°C` : '--'}
-                    </span>
+
+                    {/* Coordinates Pill */}
+                    <div className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-black/40 border border-emerald-900/60 text-[11px] mb-2 font-mono-numbers text-slate-300">
+                      <span className="text-emerald-400 font-medium">GPS Location:</span>
+                      <span>
+                        Lat: <strong className="text-white">{weather.isLocationSet && weather.latitude ? weather.latitude.toFixed(4) : '0.0000'}°</strong>, Lon: <strong className="text-white">{weather.isLocationSet && weather.longitude ? weather.longitude.toFixed(4) : '0.0000'}°</strong>
+                      </span>
+                    </div>
+
+                    {/* Rain / Humidity / Wind Stats - ALL 0 until set */}
+                    <div className="flex items-center justify-between text-xs text-slate-300 mb-2.5 bg-black/40 px-3 py-2 rounded-xl border border-emerald-950/70 font-mono-numbers">
+                      <span>Rain Chance: <strong className="text-white">{weather.isLocationSet ? weather.rainChance : 0}%</strong></span>
+                      <span className="text-slate-600">·</span>
+                      <span>Humidity: <strong className="text-white">{weather.isLocationSet ? weather.humidity : 0}%</strong></span>
+                      <span className="text-slate-600">·</span>
+                      <span>Wind: <strong className="text-white">{weather.isLocationSet ? weather.windSpeed : 0} km/h</strong></span>
+                    </div>
+
+                    {!weather.isLocationSet ? (
+                      <div className="text-[11px] text-emerald-300 mb-3 bg-emerald-950/40 p-2.5 rounded-xl border border-emerald-500/40 flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                          <span>Farmland not set (0 standby). Set your farm land through the map below:</span>
+                        </span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex-shrink-0">
+                          Option Ready
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-300 mb-3 bg-emerald-950/20 p-2 rounded-xl border border-emerald-950/50 flex items-center gap-1.5 truncate">
+                        <span className="text-emerald-400 font-bold">Active Farmland:</span>
+                        <span className="text-white font-medium truncate">{weather.locationName}</span>
+                      </div>
+                    )}
                   </div>
 
-                  <p className="text-xs text-slate-300 mb-4 bg-emerald-950/30 p-2.5 rounded-xl border border-emerald-900/40">
-                    {weather.condition} · Rain Chance: <strong className="text-white">{weather.rainChance}%</strong> · Wind: <strong className="text-white">{weather.windSpeed} km/h</strong>
-                  </p>
+                  {/* Actions: Set Farm Land on Map */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setFarmMapOpen(true)}
+                      className={`flex-1 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95 ${
+                        !weather.isLocationSet
+                          ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 ring-2 ring-emerald-400/40'
+                          : 'bg-emerald-950 border border-emerald-500/40 hover:bg-emerald-900 text-emerald-300'
+                      }`}
+                    >
+                      <MapPin className="w-4 h-4" />
+                      <span>{weather.isLocationSet ? 'Change Farm Land' : 'Set Farm Land on Map'}</span>
+                    </button>
 
-                  <button
-                    onClick={() => setCurrentTab('weather')}
-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-emerald-950/80 border border-emerald-500/40 hover:bg-emerald-900/80 text-emerald-300 text-xs font-bold transition-all"
-                  >
-                    <span>Open Full Weather Station</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
+                    <button
+                      onClick={() => setCurrentTab('weather')}
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
+                      title="Open dedicated Weather Station"
+                    >
+                      <span>Weather</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* 2. Water Pump Snapshot */}
@@ -339,6 +508,8 @@ export default function App() {
               <WeatherCard 
                 weather={weather} 
                 onRefreshWeather={fetchWeather}
+                onOpenMapPicker={() => setFarmMapOpen(true)}
+                onResetFarmland={handleResetFarmland}
                 isLoading={weatherLoading}
               />
             </div>
@@ -426,6 +597,18 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Farm Land Map Modal */}
+      <FarmMapModal
+        isOpen={farmMapOpen}
+        onClose={() => setFarmMapOpen(false)}
+        onConfirmLocation={handleConfirmFarmland}
+        initialLat={weather.latitude}
+        initialLon={weather.longitude}
+        currentLocationName={weather.locationName}
+        isLocationSet={weather.isLocationSet}
+        onResetFarmland={handleResetFarmland}
+      />
     </div>
   );
 }
