@@ -13,7 +13,11 @@ import {
   AlertCircle,
   Satellite,
   Tag,
-  Map as MapIcon
+  Map as MapIcon,
+  CloudSun,
+  Droplet,
+  Wind,
+  CloudRain
 } from 'lucide-react';
 
 interface FarmMapModalProps {
@@ -25,6 +29,14 @@ interface FarmMapModalProps {
   currentLocationName?: string;
   isLocationSet?: boolean;
   onResetFarmland?: () => void;
+}
+
+interface WeatherPreview {
+  temperature: number;
+  condition: string;
+  humidity: number;
+  windSpeed: number;
+  rainChance: number;
 }
 
 export const FarmMapModal: React.FC<FarmMapModalProps> = ({
@@ -52,50 +64,56 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<Array<{ name: string; lat: number; lon: number }>>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [mapLayer, setMapLayer] = useState<'street' | 'satellite'>('street');
+
+  // Live weather result preview for the pinned location
+  const [weatherPreview, setWeatherPreview] = useState<WeatherPreview | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   // Manual coordinate input states
   const [manualLatInput, setManualLatInput] = useState<string>('');
   const [manualLonInput, setManualLonInput] = useState<string>('');
 
-  // Custom emerald farm pin icon
+  // Create clean, precisely anchored farm marker icon
   const createFarmIcon = () => {
     return L.divIcon({
       className: 'custom-farm-pin',
       html: `
-        <div style="position: relative; transform: translate(-50%, -100%); width: 44px; height: 50px;">
+        <div style="width: 36px; height: 44px; position: relative; pointer-events: none;">
           <div style="
-            width: 40px; 
-            height: 40px; 
+            width: 36px; 
+            height: 36px; 
             background: linear-gradient(135deg, #10b981 0%, #047857 100%); 
-            border: 3px solid #ffffff; 
+            border: 2.5px solid #ffffff; 
             border-radius: 50% 50% 50% 0; 
             transform: rotate(-45deg); 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.7), 0 0 14px rgba(16,185,129,0.9);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.7), 0 0 12px rgba(16,185,129,0.9);
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto;
           ">
-            <span style="transform: rotate(45deg); font-size: 20px; line-height: 1;">🌱</span>
+            <span style="transform: rotate(45deg); font-size: 18px; line-height: 1;">🌱</span>
           </div>
           <div style="
-            width: 16px; 
-            height: 6px; 
-            background: rgba(0,0,0,0.5); 
+            width: 8px; 
+            height: 8px; 
+            background: #047857; 
             border-radius: 50%; 
-            margin: 3px auto 0;
-            filter: blur(1.5px);
+            position: absolute;
+            bottom: 0px;
+            left: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.6);
           "></div>
         </div>
       `,
-      iconSize: [44, 50],
-      iconAnchor: [22, 50],
+      iconSize: [36, 44],
+      iconAnchor: [18, 44],
     });
   };
 
-  // Helper to update marker's attached name tooltip
+  // Helper to update marker tooltip
   const updateMarkerTooltip = (name: string, lat: number, lon: number) => {
     if (markerRef.current) {
       const tooltipHtml = `
@@ -111,76 +129,54 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
       markerRef.current.bindTooltip(tooltipHtml, {
         permanent: true,
         direction: 'top',
-        offset: [0, -46],
+        offset: [0, -44],
         className: 'custom-farm-tooltip',
       }).openTooltip();
     }
   };
 
-  // Synchronize state when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      if (initialLat && initialLon && initialLat !== 0 && initialLon !== 0) {
-        setSelectedLat(initialLat);
-        setSelectedLon(initialLon);
-        setManualLatInput(initialLat.toFixed(5));
-        setManualLonInput(initialLon.toFixed(5));
-        const initialName = currentLocationName && currentLocationName !== 'Farmland Location Not Set' && currentLocationName !== 'Farmland Location Not Set (0 Standby)'
-          ? currentLocationName 
-          : `Farmland Lat ${initialLat.toFixed(4)}°, Lon ${initialLon.toFixed(4)}°`;
-        setFarmNameInput(initialName);
-      } else {
-        setSelectedLat(null);
-        setSelectedLon(null);
-        setManualLatInput('');
-        setManualLonInput('');
-        setFarmNameInput('');
+  // Fetch live weather result preview for the pinned coordinates
+  const fetchWeatherPreview = async (lat: number, lon: number) => {
+    setIsLoadingPreview(true);
+    try {
+      const res = await fetch(`/api/weather?lat=${lat}&lon=${lon}`);
+      if (res.ok) {
+        const data = await res.json();
+        setWeatherPreview({
+          temperature: data.temperature ?? 0,
+          condition: data.condition ?? 'Clear',
+          humidity: data.humidity ?? 0,
+          windSpeed: data.windSpeed ?? 0,
+          rainChance: data.rainChance ?? 0,
+        });
       }
-      setErrorMessage(null);
+    } catch (e) {
+      console.warn('Weather preview fetch error:', e);
+    } finally {
+      setIsLoadingPreview(false);
     }
-  }, [isOpen, initialLat, initialLon, currentLocationName]);
+  };
 
-  // Reverse geocode lat/lon to friendly locality name with full detail
+  // Reverse geocode lat/lon to friendly locality name via our server proxy
   const reverseGeocode = useCallback(async (lat: number, lon: number) => {
     setIsGeocoding(true);
     try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-        { headers: { 'User-Agent': 'SmartFarmIoT-MapPicker/1.0' } }
-      );
+      const res = await fetch(`/api/geocoding/reverse?lat=${lat}&lon=${lon}`);
       if (res.ok) {
         const data = await res.json();
-        const a = data.address || {};
-        const town = a.city || a.town || a.village || a.suburb || a.county || a.district;
-        const region = a.state || a.region || a.province;
-        const country = a.country;
-        let formattedName = '';
-        if (town) {
-          formattedName = `${town}${region ? ', ' + region : ''}${country ? ' (' + country + ')' : ''}`;
-        } else if (region) {
-          formattedName = `${region}${country ? ' (' + country + ')' : ''}`;
-        } else if (data.name) {
-          formattedName = `${data.name}${country ? ' (' + country + ')' : ''}`;
-        } else {
-          formattedName = `Farmland Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°`;
+        if (data.name) {
+          setFarmNameInput(data.name);
+          updateMarkerTooltip(data.name, lat, lon);
         }
-        setFarmNameInput(formattedName);
-        updateMarkerTooltip(formattedName, lat, lon);
-      } else {
-        const fallbackName = `Farmland Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°`;
-        setFarmNameInput(fallbackName);
-        updateMarkerTooltip(fallbackName, lat, lon);
       }
     } catch (e) {
-      const fallbackName = `Farmland Lat ${lat.toFixed(4)}°, Lon ${lon.toFixed(4)}°`;
-      setFarmNameInput(fallbackName);
-      updateMarkerTooltip(fallbackName, lat, lon);
+      console.warn('Reverse geocoding error:', e);
     } finally {
       setIsGeocoding(false);
     }
   }, []);
 
-  // Update marker position on map
+  // Update marker position on map and fetch preview result
   const updateMarkerPosition = useCallback((lat: number, lon: number, doReverseGeocode = true, explicitName?: string) => {
     setSelectedLat(lat);
     setSelectedLon(lon);
@@ -211,10 +207,39 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
       updateMarkerTooltip(nameToDisplay, lat, lon);
     }
 
+    // Fetch live weather result for this pinned location
+    fetchWeatherPreview(lat, lon);
+
     if (doReverseGeocode) {
       reverseGeocode(lat, lon);
     }
   }, [farmNameInput, reverseGeocode]);
+
+  // Synchronize state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      if (initialLat && initialLon && initialLat !== 0 && initialLon !== 0) {
+        setSelectedLat(initialLat);
+        setSelectedLon(initialLon);
+        setManualLatInput(initialLat.toFixed(5));
+        setManualLonInput(initialLon.toFixed(5));
+        const initialName = currentLocationName && currentLocationName !== 'Farmland Location Not Set' && currentLocationName !== 'Farmland Location Not Set (0 Standby)'
+          ? currentLocationName 
+          : `Farmland Lat ${initialLat.toFixed(4)}°, Lon ${initialLon.toFixed(4)}°`;
+        setFarmNameInput(initialName);
+        fetchWeatherPreview(initialLat, initialLon);
+      } else {
+        setSelectedLat(null);
+        setSelectedLon(null);
+        setManualLatInput('');
+        setManualLonInput('');
+        setFarmNameInput('');
+        setWeatherPreview(null);
+      }
+      setErrorMessage(null);
+      setSearchResults([]);
+    }
+  }, [isOpen, initialLat, initialLon, currentLocationName]);
 
   // Switch between Street map (with full labels) and Satellite Hybrid (imagery + labels)
   const switchLayer = (type: 'street' | 'satellite') => {
@@ -222,23 +247,19 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
     if (!mapInstanceRef.current) return;
 
     if (type === 'street') {
-      // Remove satellite base + labels
       if (satelliteBaseLayerRef.current) {
         mapInstanceRef.current.removeLayer(satelliteBaseLayerRef.current);
       }
       if (satelliteLabelsLayerRef.current) {
         mapInstanceRef.current.removeLayer(satelliteLabelsLayerRef.current);
       }
-      // Add Street Map with crystal-clear names & roads
       if (streetTileLayerRef.current) {
         streetTileLayerRef.current.addTo(mapInstanceRef.current);
       }
     } else {
-      // Remove street layer
       if (streetTileLayerRef.current) {
         mapInstanceRef.current.removeLayer(streetTileLayerRef.current);
       }
-      // Add Satellite Imagery + World Boundaries & Place Names overlay
       if (satelliteBaseLayerRef.current) {
         satelliteBaseLayerRef.current.addTo(mapInstanceRef.current);
       }
@@ -256,7 +277,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
     const startLon = (initialLon && initialLon !== 0) ? initialLon : 78.9629;
     const startZoom = (initialLat && initialLat !== 0) ? 14 : 5;
 
-    // Destroy existing instance cleanly if re-mounting
+    // Clean up previous instance if any
     if (mapInstanceRef.current) {
       mapInstanceRef.current.remove();
       mapInstanceRef.current = null;
@@ -281,7 +302,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
         maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors (with full names & labels)',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> (with full names & labels)',
       }
     );
 
@@ -307,7 +328,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
     satelliteBaseLayerRef.current = satBaseLayer;
     satelliteLabelsLayerRef.current = satLabelsLayer;
 
-    // DEFAULT TO STREET MAP WITH RICH NAMES!
+    // Default to Street Map with rich names
     streetLayer.addTo(map);
 
     // Click handler to drop or move pin
@@ -318,14 +339,14 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
 
     mapInstanceRef.current = map;
 
-    // If coordinates already exist, place initial marker with name tooltip
+    // If initial coordinates exist, place initial marker
     if (initialLat && initialLon && initialLat !== 0 && initialLon !== 0) {
       markerRef.current = L.marker([initialLat, initialLon], {
         icon: createFarmIcon(),
         draggable: true,
       }).addTo(map);
 
-      const nameToDisplay = currentLocationName && currentLocationName !== 'Farmland Location Not Set'
+      const nameToDisplay = currentLocationName && currentLocationName !== 'Farmland Location Not Set' && currentLocationName !== 'Farmland Location Not Set (0 Standby)'
         ? currentLocationName
         : `Farmland Lat ${initialLat.toFixed(4)}°, Lon ${initialLon.toFixed(4)}°`;
 
@@ -338,12 +359,12 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
       });
     }
 
-    // Multi-pass size invalidation to guarantee full container rendering
+    // Multi-pass size invalidation
     const timer1 = setTimeout(() => map.invalidateSize(), 50);
-    const timer2 = setTimeout(() => map.invalidateSize(), 250);
-    const timer3 = setTimeout(() => map.invalidateSize(), 600);
+    const timer2 = setTimeout(() => map.invalidateSize(), 200);
+    const timer3 = setTimeout(() => map.invalidateSize(), 500);
 
-    // ResizeObserver for dynamic dialog resizes
+    // ResizeObserver for dynamic resizes
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && mapContainerRef.current) {
       ro = new ResizeObserver(() => {
@@ -398,32 +419,29 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
     );
   };
 
-  // Search by city/village/town
+  // Search by city/village/town via server proxy
   const handleSearchCity = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchInput.trim()) return;
 
     setIsSearching(true);
     setErrorMessage(null);
+    setSearchResults([]);
     try {
-      const res = await fetch(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(searchInput.trim())}&count=1&language=en&format=json`
-      );
+      const res = await fetch(`/api/geocoding/search?q=${encodeURIComponent(searchInput.trim())}`);
       if (res.ok) {
         const data = await res.json();
         if (data.results && data.results.length > 0) {
-          const loc = data.results[0];
-          const lat = loc.latitude;
-          const lon = loc.longitude;
-          const name = `${loc.name}${loc.admin1 ? ', ' + loc.admin1 : ''}${loc.country ? ', ' + loc.country : ''}`;
-
+          setSearchResults(data.results);
+          // Auto select first match
+          const first = data.results[0];
           if (mapInstanceRef.current) {
-            mapInstanceRef.current.flyTo([lat, lon], 13, { duration: 1.2 });
+            mapInstanceRef.current.flyTo([first.lat, first.lon], 13, { duration: 1.2 });
           }
-          setFarmNameInput(name);
-          updateMarkerPosition(lat, lon, false, name);
+          setFarmNameInput(first.name);
+          updateMarkerPosition(first.lat, first.lon, false, first.name);
         } else {
-          setErrorMessage(`No matching location found for "${searchInput}". You can click directly on the map.`);
+          setErrorMessage(`No matching location found for "${searchInput}". Click directly on the map.`);
         }
       }
     } catch (e) {
@@ -431,6 +449,16 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
     } finally {
       setIsSearching(false);
     }
+  };
+
+  // Select a location from search results list
+  const handleSelectSearchResult = (item: { name: string; lat: number; lon: number }) => {
+    setSearchResults([]);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([item.lat, item.lon], 14, { duration: 1.0 });
+    }
+    setFarmNameInput(item.name);
+    updateMarkerPosition(item.lat, item.lon, false, item.name);
   };
 
   // Apply manual coordinates from text inputs
@@ -484,6 +512,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
     setManualLatInput('');
     setManualLonInput('');
     setFarmNameInput('');
+    setWeatherPreview(null);
     if (markerRef.current && mapInstanceRef.current) {
       mapInstanceRef.current.removeLayer(markerRef.current);
       markerRef.current = null;
@@ -504,13 +533,13 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
             </div>
             <div>
               <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                <span>Set Farm Land on Map (With Full Names & Labels)</span>
+                <span>Set Farm Land Location on Map</span>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono-numbers border border-emerald-500/30">
                   Interactive Pin
                 </span>
               </h2>
               <p className="text-[11px] sm:text-xs text-slate-300">
-                All city, district, village, and road names are labeled directly on the map
+                Click anywhere on the map to pin your farm land and see real-time weather results
               </p>
             </div>
           </div>
@@ -526,25 +555,46 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
         {/* Toolbar: Search, GPS, & Satellite/Street Toggle */}
         <div className="p-3 sm:px-5 bg-black/30 border-b border-emerald-950/60 flex flex-wrap items-center justify-between gap-2.5">
           {/* City / District Search */}
-          <form onSubmit={handleSearchCity} className="flex-1 min-w-[200px] flex items-center gap-1.5">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                placeholder="Search village, city, district name..."
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                className="w-full bg-black/60 border border-emerald-900/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-            </div>
-            <button
-              type="submit"
-              disabled={isSearching}
-              className="px-3 py-1.5 rounded-xl bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-all disabled:opacity-50"
-            >
-              {isSearching ? 'Finding...' : 'Find Name'}
-            </button>
-          </form>
+          <div className="relative flex-1 min-w-[200px]">
+            <form onSubmit={handleSearchCity} className="flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="Search village, city, district name..."
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  className="w-full bg-black/60 border border-emerald-900/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+              </div>
+              <button
+                type="submit"
+                disabled={isSearching}
+                className="px-3 py-1.5 rounded-xl bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-all disabled:opacity-50"
+              >
+                {isSearching ? 'Finding...' : 'Find'}
+              </button>
+            </form>
+
+            {/* Search Suggestions Dropdown */}
+            {searchResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-[#061613] border border-emerald-500/40 rounded-xl shadow-2xl overflow-hidden max-h-48 overflow-y-auto">
+                {searchResults.map((item, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleSelectSearchResult(item)}
+                    className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-emerald-950/80 hover:text-emerald-300 border-b border-emerald-950/40 flex items-center justify-between"
+                  >
+                    <span className="truncate">{item.name}</span>
+                    <span className="text-[10px] text-slate-400 font-mono-numbers flex-shrink-0 ml-2">
+                      {item.lat.toFixed(2)}°, {item.lon.toFixed(2)}°
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* GPS Auto Pin Button */}
           <button
@@ -556,7 +606,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
             <span>Auto-Pin My GPS</span>
           </button>
 
-          {/* Map Layer Switcher: Street with Names vs Satellite with Names */}
+          {/* Map Layer Switcher */}
           <div className="flex items-center bg-black/50 border border-emerald-900/80 rounded-xl p-0.5">
             <button
               type="button"
@@ -621,7 +671,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
             </button>
           </div>
 
-          {/* Coordinate manual input toggle / form */}
+          {/* Coordinate manual input form */}
           <form onSubmit={handleApplyManualCoords} className="flex items-center gap-1.5">
             <input
               type="text"
@@ -658,54 +708,90 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
         {/* Map Container Viewport */}
         <div 
           className="relative w-full bg-slate-950 overflow-hidden" 
-          style={{ height: '420px', minHeight: '360px' }}
+          style={{ height: '360px', minHeight: '320px' }}
         >
           <div 
             ref={mapContainerRef} 
-            className="w-full h-full"
+            className="w-full h-full cursor-crosshair"
             style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
           />
 
           {/* Instructions banner on map */}
           <div className="absolute bottom-3 left-3 z-[1000] pointer-events-none bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-500/40 text-[11px] text-emerald-200 flex items-center gap-1.5 shadow-xl">
             <Compass className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Click any city, village or road to place your farm pin with its name</span>
+            <span>Click any location on the map to drop the 🌱 farm pin</span>
           </div>
         </div>
 
+        {/* LIVE RESULT PREVIEW FOR THE RESPECTIVE PINNED LOCATION */}
+        {selectedLat !== null && selectedLon !== null && (
+          <div className="px-4 sm:px-6 py-2.5 bg-[#08201b] border-t border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex-shrink-0">
+                <CloudSun className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-white">Live Result For Pinned Location:</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono-numbers">
+                    {weatherPreview ? `${weatherPreview.temperature}°C` : 'Fetching...'}
+                  </span>
+                  <span className="text-[11px] text-emerald-400 font-medium">
+                    {weatherPreview ? weatherPreview.condition : 'Measuring...'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-300 flex items-center gap-3 mt-0.5 font-mono-numbers">
+                  <span className="flex items-center gap-1">
+                    <CloudRain className="w-3 h-3 text-blue-400" />
+                    <span>Rain: {weatherPreview ? `${weatherPreview.rainChance}%` : '...'}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Droplet className="w-3 h-3 text-cyan-400" />
+                    <span>Humidity: {weatherPreview ? `${weatherPreview.humidity}%` : '...'}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Wind className="w-3 h-3 text-slate-300" />
+                    <span>Wind: {weatherPreview ? `${weatherPreview.windSpeed} km/h` : '...'}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="text-right text-[11px] text-slate-400 font-mono-numbers">
+              <div>Lat: <strong className="text-white">{selectedLat.toFixed(4)}°</strong></div>
+              <div>Lon: <strong className="text-white">{selectedLon.toFixed(4)}°</strong></div>
+            </div>
+          </div>
+        )}
+
         {/* Bottom Coordinates, Editable Farm Name & Confirmation Bar */}
         <div className="px-4 sm:px-6 py-3.5 bg-[#061613] border-t border-emerald-950/80 flex flex-col sm:flex-row items-center justify-between gap-3">
-          {/* Editable Farm Land Name & Coordinates */}
+          {/* Editable Farm Land Name */}
           <div className="flex-1 w-full sm:w-auto">
             {selectedLat !== null && selectedLon !== null ? (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <Tag className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                  <span className="text-xs font-semibold text-emerald-300">Farm Location Name:</span>
-                  <input
-                    type="text"
-                    value={farmNameInput}
-                    onChange={(e) => {
-                      setFarmNameInput(e.target.value);
-                      if (selectedLat && selectedLon) {
-                        updateMarkerTooltip(e.target.value, selectedLat, selectedLon);
-                      }
-                    }}
-                    placeholder="Enter farm land name (e.g. Bengaluru Farm, Karnataka)..."
-                    className="flex-1 bg-black/60 border border-emerald-500/40 rounded-lg px-2.5 py-1 text-xs text-white font-bold placeholder-slate-500 focus:outline-none focus:border-emerald-400"
-                  />
-                  {isGeocoding && (
-                    <span className="text-[10px] text-emerald-400 animate-pulse flex-shrink-0">Detecting...</span>
-                  )}
-                </div>
-                <div className="text-[11px] text-slate-400 font-mono-numbers pl-6">
-                  Latitude: <strong className="text-emerald-300">{selectedLat.toFixed(5)}°</strong> · Longitude: <strong className="text-emerald-300">{selectedLon.toFixed(5)}°</strong>
-                </div>
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-emerald-300 flex-shrink-0">Farm Name:</span>
+                <input
+                  type="text"
+                  value={farmNameInput}
+                  onChange={(e) => {
+                    setFarmNameInput(e.target.value);
+                    if (selectedLat && selectedLon) {
+                      updateMarkerTooltip(e.target.value, selectedLat, selectedLon);
+                    }
+                  }}
+                  placeholder="Enter farm land name (e.g. Bengaluru Farm, Karnataka)..."
+                  className="flex-1 bg-black/60 border border-emerald-500/40 rounded-lg px-2.5 py-1 text-xs text-white font-bold placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                />
+                {isGeocoding && (
+                  <span className="text-[10px] text-emerald-400 animate-pulse flex-shrink-0">Detecting...</span>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-2 text-xs text-amber-300">
                 <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                <span>No farm land pinned yet. Click on any city, village, or field on the map to drop your pin with its name.</span>
+                <span>No farm land pinned yet. Click the map to drop the 🌱 farm pin.</span>
               </div>
             )}
           </div>
@@ -731,7 +817,7 @@ export const FarmMapModal: React.FC<FarmMapModalProps> = ({
               className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-extrabold transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95"
             >
               <Check className="w-4 h-4" />
-              <span>Confirm & Measure Live Weather</span>
+              <span>Confirm Farmland & Apply Weather</span>
             </button>
           </div>
         </div>

@@ -193,6 +193,14 @@ export default function App() {
     try {
       localStorage.setItem('smart_farm_farmland', JSON.stringify({ ...loc, confirmedByFarmer: true }));
     } catch (e) {}
+    setWeather(prev => ({
+      ...prev,
+      latitude: loc.lat,
+      longitude: loc.lon,
+      locationName: loc.locationName,
+      isLocationSet: true,
+      condition: 'Updating Live Weather...',
+    }));
     fetchWeather({ lat: loc.lat, lon: loc.lon, locationName: loc.locationName });
     setAlerts(prev => [
       {
